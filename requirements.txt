@@ -1,4 +1,4 @@
 flask
-requests
 flask-cors
-yt_dlp
+requests
+yt-dlp
