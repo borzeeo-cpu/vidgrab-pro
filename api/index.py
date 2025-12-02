@@ -1,66 +1,57 @@
 from flask import Flask, request, jsonify
 import yt_dlp
 import requests
-import random
+import json
 
 app = Flask(__name__)
 
-# قائمة سيرفرات Cobalt القوية (تعمل كبديل لليوتيوب)
-COBALT_INSTANCES = [
-    "https://cobalt.api.wuk.sh",      # قوي جداً
-    "https://api.cobalt.tools",       # الرسمي
-    "https://api.server.social",      # احتياطي
-    "https://cobalt.tools"
+# قائمة سيرفرات بديلة قوية
+PROXIES = [
+    "https://cobalt.api.wuk.sh", 
+    "https://api.cobalt.tools",
+    "https://api.server.social"
 ]
 
-def solve_with_cobalt(url):
-    """دالة لتحويل طلبات يوتيوب لسيرفرات خارجية"""
-    payload = {
-        "url": url,
-        "vQuality": "max",
-        "filenamePattern": "basic",
-        "isAudioOnly": False
-    }
-    
+def solve_youtube_proxy(url):
+    """دالة خاصة لليوتيوب تستخدم سيرفرات خارجية لتجنب الحظر"""
     headers = {
         "Accept": "application/json",
         "Content-Type": "application/json",
-        "User-Agent": "VidGrab-App/1.0"
+        "User-Agent": "Mozilla/5.0"
+    }
+    
+    payload = {
+        "url": url,
+        "videoQuality": "max",
+        "filenamePattern": "basic"
     }
 
-    # نجرب السيرفرات بالترتيب
-    for instance in COBALT_INSTANCES:
+    for domain in PROXIES:
         try:
-            # Cobalt v10 endpoint
-            api_url = f"{instance}/api/json" if "tools" in instance else instance
-            if not api_url.endswith("/api/json") and "wuk" not in instance:
-                 api_url = f"{instance}/api/json"
+            # ضبط الرابط حسب السيرفر
+            api_url = f"{domain}/api/json"
             
-            # Wuk.sh uses a direct endpoint usually
-            if "wuk.sh" in instance:
-                api_url = "https://cobalt.api.wuk.sh/api/json"
-
             # محاولة الاتصال
-            resp = requests.post(api_url, json=payload, headers=headers, timeout=8)
+            resp = requests.post(api_url, json=payload, headers=headers, timeout=10)
             data = resp.json()
 
+            # فحص النجاح
             if 'url' in data or 'picker' in data:
                 return {
                     'status': 'success',
                     'title': data.get('filename', 'YouTube Video'),
                     'url': data.get('url'),
                     'picker': data.get('picker'),
-                    'thumbnail': 'https://i.imgur.com/H8q3l5w.png', # صورة افتراضية لليوتيوب
-                    'source': 'external_proxy'
+                    'thumbnail': 'https://i.imgur.com/H8q3l5w.png',
+                    'source': 'proxy'
                 }
         except Exception as e:
             continue # فشل هذا السيرفر، جرب التالي
-    
+
     return None
 
 @app.route('/api/grab', methods=['POST', 'OPTIONS'])
 def grab_video():
-    # إعدادات السماح (CORS)
     if request.method == 'OPTIONS':
         headers = {
             'Access-Control-Allow-Origin': '*',
@@ -75,40 +66,35 @@ def grab_video():
     if not url:
         return jsonify({'error': 'No URL provided'}), 400
 
-    # 🛑 استراتيجية التوجيه الذكي 🛑
+    # 🛑 توجيه ذكي 🛑
     
-    # 1. إذا كان يوتيوب -> استخدم السيرفرات الخارجية (لتجنب الحظر)
+    # 1. يوتيوب (محظور محلياً) -> استخدم البروكسي الإجباري
     if "youtube.com" in url or "youtu.be" in url:
-        result = solve_with_cobalt(url)
+        result = solve_youtube_proxy(url)
         if result:
             return jsonify(result), 200, {'Access-Control-Allow-Origin': '*'}
-        # إذا فشلت السيرفرات الخارجية، سنحاول محلياً كحل أخير
-    
-    # 2. باقي المواقع (TikTok, Insta) أو فشل الخارجي -> استخدم yt-dlp المحلي
+        else:
+            return jsonify({'error': 'سيرفرات يوتيوب مشغولة حالياً، حاول مرة أخرى لاحقاً'}), 503, {'Access-Control-Allow-Origin': '*'}
+
+    # 2. تيك توك / انستا / فيسبوك -> استخدم yt-dlp المحلي (يعمل بامتياز)
     ydl_opts = {
         'format': 'best',
         'quiet': True,
         'simulate': True,
         'forceurl': True,
         'noplaylist': True,
-        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
     }
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
-            
             return jsonify({
                 'status': 'success',
                 'title': info.get('title'),
                 'url': info.get('url'),
                 'thumbnail': info.get('thumbnail'),
-                'source': 'local_engine'
+                'source': 'local'
             }), 200, {'Access-Control-Allow-Origin': '*'}
 
     except Exception as e:
-        error_msg = str(e)
-        if "Sign in" in error_msg:
-             return jsonify({'error': 'يوتيوب يحظر السيرفر حالياً، يرجى المحاولة لاحقاً'}), 500, {'Access-Control-Allow-Origin': '*'}
-        
         return jsonify({'error': str(e)}), 500, {'Access-Control-Allow-Origin': '*'}
