@@ -1,115 +1,97 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+import yt_dlp
 import requests
 import random
-import yt_dlp
 
 app = Flask(__name__)
-CORS(app)
+# هذا السطر السحري يحل مشكلة Failed to fetch
+CORS(app, resources={r"/*": {"origins": "*"}})
 
-# 1. قائمة سيرفرات التحميل (للتحميل فقط)
+# سيرفرات التحميل (Cobalt)
 COBALT_APIS = [
     "https://api.cobalt.tools/api/json",
     "https://cobalt.api.wuk.sh/api/json",
-    "https://co.wuk.sh/api/json",
     "https://api.server.social/api/json",
-    "https://cobalt.deno.dev/api/json",
-    "https://c1.saveweb.org/api/json",
-    "https://cobalt.saveweb.org/api/json",
     "https://cobalt.tools2.net/api/json",
-    "https://co2.saveweb.org/api/json",
-    "https://api.y2dl.org/api/json",
-    "https://cobalt.saveporn.net/api/json",
-    "https://cobalt.fastvps.eu.org/api/json",
-    "https://cobalt.vern.cc/api/json",
-    "https://cobalt.up.railway.app/api/json",
-    "https://cobalt.booz.in/api/json",
-    "https://api.cobalt.pm/api/json",
-    "https://cobalt.drgns.space/api/json",
-    "https://cobalt.nvme0n1p2.sh/api/json",
-    "https://cobalt.sefod.eu.org/api/json",
-    "https://cobalt.reichis.tech/api/json",
-    "https://cobalt.aprxl.com/api/json",
-    "https://cobalt.tokamak.workers.dev/api/json"
+    "https://co2.saveweb.org/api/json"
 ]
 
-# 2. دالة البحث (تستخدم yt-dlp محلياً لأنه آمن في البحث)
-def search_yt(query):
+def search_youtube(query):
+    """بحث سريع وآمن"""
     ydl_opts = {
         'default_search': 'ytsearch10',
         'quiet': True,
         'simulate': True,
-        'extract_flat': True, # السر هنا: جلب العناوين فقط بدون تفاصيل ثقيلة
+        'extract_flat': True, # يجلب العناوين فقط بسرعة
     }
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(query, download=False)
             results = []
-            for entry in info['entries']:
-                if not entry: continue
-                results.append({
-                    'id': entry.get('id'),
-                    'title': entry.get('title'),
-                    'uploader': entry.get('uploader'),
-                    'duration': entry.get('duration_string'),
-                    'thumbnail': f"https://i.ytimg.com/vi/{entry.get('id')}/mqdefault.jpg",
-                    'url': f"https://www.youtube.com/watch?v={entry.get('id')}"
-                })
-            return {'results': results}
-    except Exception as e:
-        return {'error': str(e)}
+            if 'entries' in info:
+                for entry in info['entries']:
+                    if not entry: continue
+                    results.append({
+                        'title': entry.get('title'),
+                        'duration': entry.get('duration_string'),
+                        'uploader': entry.get('uploader'),
+                        'url': f"https://www.youtube.com/watch?v={entry.get('id')}",
+                        'thumbnail': f"https://i.ytimg.com/vi/{entry.get('id')}/mqdefault.jpg"
+                    })
+            return results
+    except:
+        return []
 
 @app.route('/api/grab', methods=['POST', 'OPTIONS'])
 def handler():
     if request.method == 'OPTIONS':
-        return ('', 204, {
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'POST, OPTIONS',
-            'Access-Control-Allow-Headers': 'Content-Type'
-        })
+        return jsonify({'status': 'ok'}), 200
 
     data = request.json
     
-    # أ) إذا كان طلب بحث
+    # 1. لو المستخدم بيبحث (عشان نعرض له فيديوهات زي SnapTube)
     if 'query' in data:
-        return jsonify(search_yt(data['query']))
+        results = search_youtube(data['query'])
+        return jsonify({'results': results})
 
-    # ب) إذا كان طلب تحميل
+    # 2. لو المستخدم اختار فيديو وعاوز يحمله
     url = data.get('url')
-    if not url: return jsonify({'error': 'No URL provided'}), 400
+    if not url: return jsonify({'error': 'No URL'}), 400
 
     random.shuffle(COBALT_APIS)
     
     headers = {
         "Content-Type": "application/json",
         "Accept": "application/json",
-        "User-Agent": "VidGrab/Pro"
+        "User-Agent": "VidGrab/App"
     }
 
     payload = {
         "url": url,
         "videoQuality": "max",
         "filenamePattern": "basic",
-        "tiktokH265": False,
-        "twitterGif": True,
         "youtubeVideoCodec": "h264"
     }
 
-    # تجربة السيرفرات واحداً تلو الآخر
-    for api_url in COBALT_APIS:
+    for api in COBALT_APIS:
         try:
-            resp = requests.post(api_url, json=payload, headers=headers, timeout=8)
-            if resp.status_code == 200:
-                d = resp.json()
+            r = requests.post(api, json=payload, headers=headers, timeout=9)
+            if r.status_code == 200:
+                d = r.json()
                 if 'url' in d or 'picker' in d:
                     return jsonify({
                         'status': 'success',
                         'title': d.get('filename'),
                         'url': d.get('url'),
                         'picker': d.get('picker'),
-                        'thumbnail': 'https://placehold.co/600x400/000/FFF?text=Video+Ready'
-                    }), 200
+                        'thumbnail': 'https://placehold.co/600x400/000/FFF?text=Ready'
+                    })
         except:
             continue
 
-    return jsonify({'error': 'فشلت جميع السيرفرات، يرجى المحاولة لاحقاً'}), 500
+    return jsonify({'error': 'فشل التحميل، حاول مرة أخرى'}), 500
+
+# ضروري لـ Vercel
+if __name__ == '__main__':
+    app.run()
