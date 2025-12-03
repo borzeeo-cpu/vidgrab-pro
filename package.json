@@ -1,0 +1,7 @@
+{
+  "name": "vidgrab-backend",
+  "version": "1.0.0",
+  "dependencies": {
+    "ytdl-core": "latest"
+  }
+}
